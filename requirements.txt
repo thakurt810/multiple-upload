@@ -1,0 +1,22 @@
+# No third-party packages required — stdlib only.
+# Uncomment below if you extend the pipeline:
+
+# google-auth==2.29.0
+# google-api-python-client==2.130.0
+# requests==2.31.0
+# python-dotenv==1.0.1        # useful for local .env testing
+
+
+# No third-party packages required.
+# The pipeline uses only Python standard library modules:
+#   - os, json, random, logging, time, datetime, sys, traceback
+#   - urllib.request, urllib.parse
+#   - pathlib
+
+# If you ever want to extend this pipeline, useful packages are listed below
+# (commented out). Uncomment what you need.
+
+# google-auth==2.29.0           # Alternative Google auth helper
+# google-api-python-client==2.130.0  # Official Google API client
+# requests==2.31.0              # Easier HTTP calls
+# python-dotenv==1.0.1          # Load .env file for local development

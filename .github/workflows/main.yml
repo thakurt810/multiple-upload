@@ -12,19 +12,13 @@ on:
     - cron: "30 18 * * *"
     - cron: "30 19 * * *"
 
-  # Manual trigger from the GitHub UI (Actions → Run workflow)
   workflow_dispatch:
-    inputs:
-      loop_override:
-        description: "Number of accounts to process (overrides LOOP secret)"
-        required: false
-        default: ""
 
 jobs:
   upload:
     name: Pick & Upload Video
     runs-on: ubuntu-latest
-    timeout-minutes: 60   # generous limit for large videos + Instagram polling
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -35,8 +29,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      # requirements.txt is intentionally empty (stdlib only),
-      # but we run pip install anyway so future additions just work.
       - name: Install dependencies
         run: |
           pip install --upgrade pip
@@ -44,12 +36,7 @@ jobs:
 
       - name: Run upload pipeline
         env:
-          # ── How many account slots to process ────────────────
-          # Set secret LOOP to "2" for 2 accounts, "3" for 3, etc.
-          # workflow_dispatch input takes priority when provided.
-          LOOP: ${{ github.event.inputs.loop_override || secrets.LOOP }}
-
-          # ── Shared Google Drive OAuth (one app, all accounts) ─
+          # ── Shared Google Drive OAuth ─────────────────────────
           GDRIVE_CLIENT_ID:      ${{ secrets.GDRIVE_CLIENT_ID }}
           GDRIVE_CLIENT_SECRET:  ${{ secrets.GDRIVE_CLIENT_SECRET }}
           GDRIVE_REFRESH_TOKEN:  ${{ secrets.GDRIVE_REFRESH_TOKEN }}
@@ -64,7 +51,7 @@ jobs:
           IG_ACCESS_TOKEN_1:           ${{ secrets.IG_ACCESS_TOKEN_1 }}
           IG_ACCOUNT_ID_1:             ${{ secrets.IG_ACCOUNT_ID_1 }}
 
-          # ── Account 2 (add secrets, set LOOP=2 to activate) ───
+          # ── Account 2 (set LOOP=2 in script to activate) ──────
           GDRIVE_VIDEOS_FOLDER_ID_2:   ${{ secrets.GDRIVE_VIDEOS_FOLDER_ID_2 }}
           GDRIVE_METADATA_FOLDER_ID_2: ${{ secrets.GDRIVE_METADATA_FOLDER_ID_2 }}
           GDRIVE_LOGS_FOLDER_ID_2:     ${{ secrets.GDRIVE_LOGS_FOLDER_ID_2 }}
@@ -74,7 +61,7 @@ jobs:
           IG_ACCESS_TOKEN_2:           ${{ secrets.IG_ACCESS_TOKEN_2 }}
           IG_ACCOUNT_ID_2:             ${{ secrets.IG_ACCOUNT_ID_2 }}
 
-          # ── Account 3 (add secrets, set LOOP=3 to activate) ───
+          # ── Account 3 (set LOOP=3 in script to activate) ──────
           GDRIVE_VIDEOS_FOLDER_ID_3:   ${{ secrets.GDRIVE_VIDEOS_FOLDER_ID_3 }}
           GDRIVE_METADATA_FOLDER_ID_3: ${{ secrets.GDRIVE_METADATA_FOLDER_ID_3 }}
           GDRIVE_LOGS_FOLDER_ID_3:     ${{ secrets.GDRIVE_LOGS_FOLDER_ID_3 }}
@@ -84,12 +71,8 @@ jobs:
           IG_ACCESS_TOKEN_3:           ${{ secrets.IG_ACCESS_TOKEN_3 }}
           IG_ACCOUNT_ID_3:             ${{ secrets.IG_ACCOUNT_ID_3 }}
 
-          # To add Account 4+: copy the Account 3 block, increment suffix,
-          # add matching secrets in GitHub, and bump LOOP.
-
         run: python upload_pipeline.py
 
-      # Always save local logs as a GitHub Actions artifact (backup)
       - name: Save logs as artifact
         if: always()
         uses: actions/upload-artifact@v4

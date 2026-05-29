@@ -3,7 +3,7 @@
 Social Media Auto-Upload Pipeline
 Uploads videos from Google Drive to YouTube Shorts and/or Instagram Reels.
 
-Multi-account support: set LOOP=N to process N accounts in one run.
+Multi-account support: set LOOP to process N accounts in one run.
 Each account uses numbered secrets: GDRIVE_VIDEOS_FOLDER_ID_1, YT_CLIENT_ID_1, etc.
 Shared secrets (no suffix): GDRIVE_CLIENT_ID, GDRIVE_CLIENT_SECRET, GDRIVE_REFRESH_TOKEN.
 """
@@ -20,14 +20,16 @@ import urllib.request
 import urllib.parse
 
 # ─────────────────────────────────────────────
+# HARDCODED LOOP — change this directly in code
+# ─────────────────────────────────────────────
+LOOP = 1
+
+# ─────────────────────────────────────────────
 # SHARED GDRIVE CREDENTIALS  (no suffix — same for all accounts)
 # ─────────────────────────────────────────────
 GDRIVE_CLIENT_ID      = os.environ.get("GDRIVE_CLIENT_ID", "")
 GDRIVE_CLIENT_SECRET  = os.environ.get("GDRIVE_CLIENT_SECRET", "")
 GDRIVE_REFRESH_TOKEN  = os.environ.get("GDRIVE_REFRESH_TOKEN", "")
-
-# How many account slots to process (default 1)
-LOOP = int(os.environ.get("LOOP" or "1"))
 
 MAX_RETRIES  = 3
 RETRY_DELAY  = 5   # seconds between retries
@@ -36,29 +38,20 @@ RETRY_DELAY  = 5   # seconds between retries
 # PER-ACCOUNT CONFIG LOADER
 # ─────────────────────────────────────────────
 def load_account_config(n: int) -> dict:
-    """
-    Load all per-account env vars for slot n (1-indexed).
-    Returns a dict with keys matching what the pipeline uses.
-    """
-    s = str(n)  # suffix
+    s = str(n)
     return {
-        # ── Google Drive folders ──────────────────────────
         "gdrive_videos_folder":   os.environ.get(f"GDRIVE_VIDEOS_FOLDER_ID_{s}", ""),
         "gdrive_metadata_folder": os.environ.get(f"GDRIVE_METADATA_FOLDER_ID_{s}", ""),
         "gdrive_logs_folder":     os.environ.get(f"GDRIVE_LOGS_FOLDER_ID_{s}", ""),
-
-        # ── YouTube Data API v3 ───────────────────────────
         "yt_client_id":      os.environ.get(f"YT_CLIENT_ID_{s}", ""),
         "yt_client_secret":  os.environ.get(f"YT_CLIENT_SECRET_{s}", ""),
         "yt_refresh_token":  os.environ.get(f"YT_REFRESH_TOKEN_{s}", ""),
-
-        # ── Instagram Graph API ───────────────────────────
         "ig_access_token":  os.environ.get(f"IG_ACCESS_TOKEN_{s}", ""),
         "ig_account_id":    os.environ.get(f"IG_ACCOUNT_ID_{s}", ""),
     }
 
 # ─────────────────────────────────────────────
-# LOGGING  (per-run log lines list passed around)
+# LOGGING
 # ─────────────────────────────────────────────
 def make_logger():
     lines = []
@@ -92,7 +85,7 @@ def with_retries(fn, label, log_info, log_error):
     return False, None
 
 # ─────────────────────────────────────────────
-# GOOGLE DRIVE  (shared OAuth credentials)
+# GOOGLE DRIVE
 # ─────────────────────────────────────────────
 def get_gdrive_access_token():
     payload = urllib.parse.urlencode({
@@ -204,12 +197,11 @@ def get_youtube_access_token(cfg):
 
 
 def upload_to_youtube(video_path, metadata, cfg, log_info):
-    token      = get_youtube_access_token(cfg)
-    title      = metadata.get("youtube_title",       DEFAULT_METADATA["youtube_title"])[:100]
+    token       = get_youtube_access_token(cfg)
+    title       = metadata.get("youtube_title",       DEFAULT_METADATA["youtube_title"])[:100]
     description = metadata.get("youtube_description", DEFAULT_METADATA["youtube_description"])[:5000]
-    file_size  = os.path.getsize(video_path)
+    file_size   = os.path.getsize(video_path)
 
-    # Step 1 — initiate resumable upload
     init_meta = json.dumps({
         "snippet": {
             "title":       title,
@@ -234,7 +226,6 @@ def upload_to_youtube(video_path, metadata, cfg, log_info):
     with urllib.request.urlopen(init_req) as r:
         upload_url = r.headers["Location"]
 
-    # Step 2 — upload bytes
     with open(video_path, "rb") as f:
         video_data = f.read()
     upload_req = urllib.request.Request(
@@ -258,14 +249,16 @@ def upload_to_instagram(video_path, metadata, cfg, log_info):
     file_size  = os.path.getsize(video_path)
 
     # Step 1 — create media container (resumable)
-    init_url = f"https://graph.facebook.com/v19.0/{account_id}/media"
-    params   = urllib.parse.urlencode({
+    params = urllib.parse.urlencode({
         "media_type":   "REELS",
         "caption":      caption,
         "access_token": token,
         "upload_type":  "resumable",
     }).encode()
-    req = urllib.request.Request(init_url, data=params, method="POST")
+    req = urllib.request.Request(
+        f"https://graph.facebook.com/v23.0/{account_id}/media",
+        data=params, method="POST"
+    )
     with urllib.request.urlopen(req) as r:
         init_data = json.loads(r.read())
 
@@ -292,7 +285,7 @@ def upload_to_instagram(video_path, metadata, cfg, log_info):
 
     # Step 3 — poll until FINISHED
     status_url = (
-        f"https://graph.facebook.com/v19.0/{container_id}"
+        f"https://graph.facebook.com/v23.0/{container_id}"
         f"?fields=status_code&access_token={token}"
     )
     for _ in range(20):
@@ -309,12 +302,14 @@ def upload_to_instagram(video_path, metadata, cfg, log_info):
         raise TimeoutError("Instagram container never reached FINISHED state.")
 
     # Step 4 — publish
-    publish_url = f"https://graph.facebook.com/v19.0/{account_id}/media_publish"
-    pub_params  = urllib.parse.urlencode({
+    pub_params = urllib.parse.urlencode({
         "creation_id":  container_id,
         "access_token": token,
     }).encode()
-    pub_req = urllib.request.Request(publish_url, data=pub_params, method="POST")
+    pub_req = urllib.request.Request(
+        f"https://graph.facebook.com/v23.0/{account_id}/media_publish",
+        data=pub_params, method="POST"
+    )
     with urllib.request.urlopen(pub_req) as r:
         pub_data = json.loads(r.read())
 
@@ -326,11 +321,6 @@ def upload_to_instagram(video_path, metadata, cfg, log_info):
 # SINGLE ACCOUNT PIPELINE
 # ─────────────────────────────────────────────
 def run_account(n: int, gdrive_token: str) -> bool:
-    """
-    Run the full upload pipeline for account slot n.
-    gdrive_token is the already-fetched shared Drive access token.
-    Returns True if at least one upload succeeded.
-    """
     log_info, log_warn, log_error, log_lines = make_logger()
 
     run_start = datetime.datetime.utcnow()
@@ -339,10 +329,9 @@ def run_account(n: int, gdrive_token: str) -> bool:
 
     cfg = load_account_config(n)
 
-    # Validate per-account credentials
     gdrive_ok    = all([cfg["gdrive_videos_folder"], cfg["gdrive_metadata_folder"], cfg["gdrive_logs_folder"]])
-    youtube_ok   = all([cfg["yt_client_id"],     cfg["yt_client_secret"],   cfg["yt_refresh_token"]])
-    instagram_ok = all([cfg["ig_access_token"],  cfg["ig_account_id"]])
+    youtube_ok   = all([cfg["yt_client_id"],    cfg["yt_client_secret"],  cfg["yt_refresh_token"]])
+    instagram_ok = all([cfg["ig_access_token"], cfg["ig_account_id"]])
 
     if not gdrive_ok:
         log_error(f"Account {n}: Google Drive folder IDs missing. Skipping.")
@@ -357,7 +346,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
         log_error(f"Account {n}: Neither YouTube nor Instagram credentials provided. Nothing to do.")
         return False
 
-    # ── 1. List videos ─────────────────────────────────────────
+    # 1. List videos
     ok, video_files = with_retries(
         lambda: gdrive_list_files(cfg["gdrive_videos_folder"], gdrive_token),
         f"[{n}] List video files", log_info, log_error,
@@ -372,7 +361,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
         log_error(f"Account {n}: No video files found.")
         return False
 
-    # ── 2. Pick & download video ───────────────────────────────
+    # 2. Pick & download video
     chosen      = random.choice(video_files)
     video_name  = chosen["name"]
     video_stem  = Path(video_name).stem
@@ -387,7 +376,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
         log_error(f"Account {n}: Failed to download video.")
         return False
 
-    # ── 3. Load metadata ───────────────────────────────────────
+    # 3. Load metadata
     _, meta_files = with_retries(
         lambda: gdrive_list_files(cfg["gdrive_metadata_folder"], gdrive_token),
         f"[{n}] List metadata files", log_info, log_error,
@@ -395,7 +384,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
     meta_files = meta_files or []
     metadata, meta_file_id = load_metadata(meta_files, video_stem, gdrive_token, log_info, log_warn)
 
-    # ── 4. Upload to YouTube ───────────────────────────────────
+    # 4. Upload to YouTube
     youtube_success  = False
     youtube_video_id = None
     if youtube_ok:
@@ -410,7 +399,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
     else:
         log_info(f"Account {n}: Skipping YouTube (no credentials).")
 
-    # ── 5. Upload to Instagram ─────────────────────────────────
+    # 5. Upload to Instagram
     instagram_success  = False
     instagram_media_id = None
     if instagram_ok:
@@ -425,7 +414,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
     else:
         log_info(f"Account {n}: Skipping Instagram (no credentials).")
 
-    # ── 6. Trash source files if any upload succeeded ──────────
+    # 6. Trash source files if any upload succeeded
     any_success = youtube_success or instagram_success
     if any_success:
         log_info(f"Account {n}: Upload succeeded — trashing source files.")
@@ -443,13 +432,13 @@ def run_account(n: int, gdrive_token: str) -> bool:
     else:
         log_warn(f"Account {n}: All uploads failed — source files kept.")
 
-    # ── 7. Clean up local temp file ────────────────────────────
+    # 7. Clean up local temp file
     try:
         os.remove(local_video)
     except Exception:
         pass
 
-    # ── 8. Upload status log to Drive ──────────────────────────
+    # 8. Upload status log to Drive
     run_end      = datetime.datetime.utcnow()
     upload_dt    = run_end.strftime("%Y%m%d_%H%M%S")
     log_filename = f"acct{n}_{video_stem}_{upload_dt}.txt"
@@ -480,12 +469,10 @@ def run_all():
 
     root_log_info(f"Pipeline starting — LOOP={LOOP} account(s)")
 
-    # Validate shared GDrive credentials once
     if not all([GDRIVE_CLIENT_ID, GDRIVE_CLIENT_SECRET, GDRIVE_REFRESH_TOKEN]):
         root_log_error("Shared Google Drive credentials (GDRIVE_CLIENT_ID / SECRET / REFRESH_TOKEN) are missing.")
         return False
 
-    # Get one shared Drive access token for this run
     try:
         gdrive_token = get_gdrive_access_token()
         root_log_info("Shared GDrive token obtained.")

@@ -27,7 +27,7 @@ GDRIVE_CLIENT_SECRET  = os.environ.get("GDRIVE_CLIENT_SECRET", "")
 GDRIVE_REFRESH_TOKEN  = os.environ.get("GDRIVE_REFRESH_TOKEN", "")
 
 # How many account slots to process (default 1)
-LOOP = int(os.environ.get("LOOP", "1"))
+LOOP = int(os.environ.get("LOOP" or "1"))
 
 MAX_RETRIES  = 3
 RETRY_DELAY  = 5   # seconds between retries

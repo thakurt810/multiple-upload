@@ -421,8 +421,10 @@ def run_account(n: int, gdrive_token: str) -> bool:
         try:
             gdrive_trash_file(chosen["id"], gdrive_token)
             log_info(f"Account {n}: Trashed video '{video_name}'.")
-        except Exception as e:
-            log_warn(f"Account {n}: Could not trash video: {e}")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8")
+            log_warn(f"Trash failed: {e.code}")
+            log_warn(body)
         if meta_file_id:
             try:
                 gdrive_trash_file(meta_file_id, gdrive_token)

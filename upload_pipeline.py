@@ -18,6 +18,8 @@ import traceback
 from pathlib import Path
 import urllib.request
 import urllib.parse
+import urllib.error
+
 
 # ─────────────────────────────────────────────
 # HARDCODED LOOP — change this directly in code
@@ -71,16 +73,49 @@ def make_logger():
 # ─────────────────────────────────────────────
 # RETRY HELPER
 # ─────────────────────────────────────────────
+# def with_retries(fn, label, log_info, log_error):
+#     for attempt in range(1, MAX_RETRIES + 1):
+#         try:
+#             result = fn()
+#             log_info(f"{label} succeeded (attempt {attempt}).")
+#             return True, result
+#         except Exception as e:
+#             log_error(f"{label} attempt {attempt}/{MAX_RETRIES} failed: {e}")
+        
+#             if attempt < MAX_RETRIES:
+#                 time.sleep(RETRY_DELAY)
+#     log_error(f"{label} failed after {MAX_RETRIES} attempts.")
+#     return False, None
+
 def with_retries(fn, label, log_info, log_error):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             result = fn()
             log_info(f"{label} succeeded (attempt {attempt}).")
             return True, result
-        except Exception as e:
-            log_error(f"{label} attempt {attempt}/{MAX_RETRIES} failed: {e}")
+
+        except urllib.error.HTTPError as e:
+            log_error(
+                f"{label} attempt {attempt}/{MAX_RETRIES} failed: HTTP {e.code}"
+            )
+
+            try:
+                body = e.read().decode("utf-8")
+                log_error(body)
+            except Exception:
+                pass
+
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY)
+
+        except Exception as e:
+            log_error(
+                f"{label} attempt {attempt}/{MAX_RETRIES} failed: {e}"
+            )
+
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY)
+
     log_error(f"{label} failed after {MAX_RETRIES} attempts.")
     return False, None
 

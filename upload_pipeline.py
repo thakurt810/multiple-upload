@@ -22,7 +22,7 @@ import urllib.parse
 # ─────────────────────────────────────────────
 # HARDCODED LOOP — change this directly in code
 # ─────────────────────────────────────────────
-LOOP = 1
+LOOP = 2
 
 # ─────────────────────────────────────────────
 # SHARED GDRIVE CREDENTIALS  (no suffix — same for all accounts)

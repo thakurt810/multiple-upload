@@ -71,6 +71,13 @@ jobs:
           IG_ACCESS_TOKEN_3:           ${{ secrets.IG_ACCESS_TOKEN_3 }}
           IG_ACCOUNT_ID_3:             ${{ secrets.IG_ACCOUNT_ID_3 }}
 
+          #updating status.json
+          GIT_PAT: ${{ secrets.GIT_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ACCOUNT_KEY_1: ${{ secrets.ACCOUNT_KEY_1 }}
+          ACCOUNT_KEY_2: ${{ secrets.ACCOUNT_KEY_2 }}
+          # ...etc for account 3
+
         run: python upload_pipeline.py
 
       - name: Save logs as artifact

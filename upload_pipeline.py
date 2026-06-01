@@ -6,6 +6,10 @@ Uploads videos from Google Drive to YouTube Shorts and/or Instagram Reels.
 Multi-account support: set LOOP to process N accounts in one run.
 Each account uses numbered secrets: GDRIVE_VIDEOS_FOLDER_ID_1, YT_CLIENT_ID_1, etc.
 Shared secrets (no suffix): GDRIVE_CLIENT_ID, GDRIVE_CLIENT_SECRET, GDRIVE_REFRESH_TOKEN.
+
+Status tracking: uploaded video/meta Drive IDs are recorded in status.json in the repo,
+keyed by ACCOUNT_KEY_N (e.g. "vegetable", "dad_joke") with sub-keys _video and _meta.
+Videos already in status.json are skipped — no trashing ever happens.
 """
 
 import os
@@ -15,6 +19,7 @@ import time
 import datetime
 import sys
 import traceback
+import base64
 from pathlib import Path
 import urllib.request
 import urllib.parse
@@ -33,6 +38,13 @@ GDRIVE_CLIENT_ID      = os.environ.get("GDRIVE_CLIENT_ID", "")
 GDRIVE_CLIENT_SECRET  = os.environ.get("GDRIVE_CLIENT_SECRET", "")
 GDRIVE_REFRESH_TOKEN  = os.environ.get("GDRIVE_REFRESH_TOKEN", "")
 
+# ─────────────────────────────────────────────
+# GITHUB CONFIG  (for reading/writing status.json)
+# ─────────────────────────────────────────────
+GIT_PAT           = os.environ.get("GIT_PAT", "")
+GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "")   # e.g. "username/repo"
+STATUS_FILE_PATH  = "status.json"                              # path inside the repo
+
 MAX_RETRIES  = 3
 RETRY_DELAY  = 5   # seconds between retries
 
@@ -42,6 +54,7 @@ RETRY_DELAY  = 5   # seconds between retries
 def load_account_config(n: int) -> dict:
     s = str(n)
     return {
+        "account_key":            os.environ.get(f"ACCOUNT_KEY_{s}", f"account{s}"),
         "gdrive_videos_folder":   os.environ.get(f"GDRIVE_VIDEOS_FOLDER_ID_{s}", ""),
         "gdrive_metadata_folder": os.environ.get(f"GDRIVE_METADATA_FOLDER_ID_{s}", ""),
         "gdrive_logs_folder":     os.environ.get(f"GDRIVE_LOGS_FOLDER_ID_{s}", ""),
@@ -73,20 +86,6 @@ def make_logger():
 # ─────────────────────────────────────────────
 # RETRY HELPER
 # ─────────────────────────────────────────────
-# def with_retries(fn, label, log_info, log_error):
-#     for attempt in range(1, MAX_RETRIES + 1):
-#         try:
-#             result = fn()
-#             log_info(f"{label} succeeded (attempt {attempt}).")
-#             return True, result
-#         except Exception as e:
-#             log_error(f"{label} attempt {attempt}/{MAX_RETRIES} failed: {e}")
-        
-#             if attempt < MAX_RETRIES:
-#                 time.sleep(RETRY_DELAY)
-#     log_error(f"{label} failed after {MAX_RETRIES} attempts.")
-#     return False, None
-
 def with_retries(fn, label, log_info, log_error):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -98,13 +97,11 @@ def with_retries(fn, label, log_info, log_error):
             log_error(
                 f"{label} attempt {attempt}/{MAX_RETRIES} failed: HTTP {e.code}"
             )
-
             try:
                 body = e.read().decode("utf-8")
                 log_error(body)
             except Exception:
                 pass
-
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY)
 
@@ -112,12 +109,86 @@ def with_retries(fn, label, log_info, log_error):
             log_error(
                 f"{label} attempt {attempt}/{MAX_RETRIES} failed: {e}"
             )
-
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY)
 
     log_error(f"{label} failed after {MAX_RETRIES} attempts.")
     return False, None
+
+# ─────────────────────────────────────────────
+# STATUS.JSON  —  read & write via GitHub API
+# ─────────────────────────────────────────────
+def _github_api_request(method, path, payload=None):
+    """Raw GitHub REST API call. Returns parsed JSON body."""
+    url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/contents/{path}"
+    data = json.dumps(payload).encode() if payload else None
+    req  = urllib.request.Request(
+        url, data=data, method=method,
+        headers={
+            "Authorization": f"Bearer {GIT_PAT}",
+            "Accept":        "application/vnd.github+json",
+            "Content-Type":  "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def load_status(log_info, log_warn) -> tuple[dict, str | None]:
+    """
+    Returns (status_dict, file_sha).
+    file_sha is None if the file doesn't exist yet.
+    status_dict shape:
+      {
+        "vegetable_video": ["driveId1", "driveId2", ...],
+        "vegetable_meta":  ["driveId3", ...],
+        "dad_joke_video":  [...],
+        "dad_joke_meta":   [...],
+        ...
+      }
+    """
+    try:
+        data    = _github_api_request("GET", STATUS_FILE_PATH)
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        sha     = data["sha"]
+        status  = json.loads(content)
+        log_info(f"Loaded status.json (sha={sha[:7]}): {len(status)} key(s) tracked.")
+        return status, sha
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            log_warn("status.json not found in repo — will create fresh.")
+            return {}, None
+        raise
+
+
+def save_status(status: dict, sha: str | None, commit_message: str, log_info, log_error) -> bool:
+    """
+    Commits the updated status dict back to the repo.
+    sha must be the current file SHA (or None to create).
+    """
+    if not GIT_PAT or not GITHUB_REPOSITORY:
+        log_error("GIT_PAT or GITHUB_REPOSITORY not set — cannot save status.json.")
+        return False
+
+    content_b64 = base64.b64encode(
+        json.dumps(status, indent=2).encode("utf-8")
+    ).decode("utf-8")
+
+    payload = {
+        "message": commit_message,
+        "content": content_b64,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    try:
+        _github_api_request("PUT", STATUS_FILE_PATH, payload)
+        log_info(f"status.json committed: {commit_message}")
+        return True
+    except Exception as e:
+        log_error(f"Failed to commit status.json: {e}")
+        return False
 
 # ─────────────────────────────────────────────
 # GOOGLE DRIVE
@@ -154,17 +225,6 @@ def gdrive_download_file(file_id, dest, token):
     with urllib.request.urlopen(req) as resp, open(dest, "wb") as f:
         while chunk := resp.read(1024 * 1024):
             f.write(chunk)
-
-
-def gdrive_trash_file(file_id, token):
-    url  = f"https://www.googleapis.com/drive/v3/files/{file_id}"
-    data = json.dumps({"trashed": True}).encode()
-    req  = urllib.request.Request(
-        url, data=data, method="PATCH",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req):
-        pass
 
 
 def gdrive_upload_text(folder_id, filename, content, token):
@@ -355,14 +415,24 @@ def upload_to_instagram(video_path, metadata, cfg, log_info):
 # ─────────────────────────────────────────────
 # SINGLE ACCOUNT PIPELINE
 # ─────────────────────────────────────────────
-def run_account(n: int, gdrive_token: str) -> bool:
+def run_account(n: int, gdrive_token: str, status: dict, status_sha: str | None) -> tuple[bool, dict, str | None]:
+    """
+    Returns (any_success, updated_status, updated_sha).
+    updated_status and updated_sha reflect the committed state after this account runs
+    (so the next account gets a fresh sha to avoid conflicts).
+    """
     log_info, log_warn, log_error, log_lines = make_logger()
 
     run_start = datetime.datetime.utcnow()
     log_info("=" * 60)
     log_info(f"Account slot {n} — started at {run_start.strftime('%Y-%m-%dT%H:%M:%SZ')}")
 
-    cfg = load_account_config(n)
+    cfg         = load_account_config(n)
+    account_key = cfg["account_key"]
+    video_key   = f"{account_key}_video"
+    meta_key    = f"{account_key}_meta"
+
+    log_info(f"Account {n}: key='{account_key}' → tracking '{video_key}' and '{meta_key}'")
 
     gdrive_ok    = all([cfg["gdrive_videos_folder"], cfg["gdrive_metadata_folder"], cfg["gdrive_logs_folder"]])
     youtube_ok   = all([cfg["yt_client_id"],    cfg["yt_client_secret"],  cfg["yt_refresh_token"]])
@@ -370,7 +440,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
 
     if not gdrive_ok:
         log_error(f"Account {n}: Google Drive folder IDs missing. Skipping.")
-        return False
+        return False, status, status_sha
 
     if not youtube_ok:
         log_warn(f"Account {n}: YouTube credentials not set — YouTube upload will be skipped.")
@@ -379,7 +449,12 @@ def run_account(n: int, gdrive_token: str) -> bool:
 
     if not youtube_ok and not instagram_ok:
         log_error(f"Account {n}: Neither YouTube nor Instagram credentials provided. Nothing to do.")
-        return False
+        return False, status, status_sha
+
+    # ── Already-uploaded Drive IDs for this account ──────────────
+    uploaded_video_ids = set(status.get(video_key, []))
+    uploaded_meta_ids  = set(status.get(meta_key,  []))
+    log_info(f"Account {n}: {len(uploaded_video_ids)} video(s) already uploaded, skipping those.")
 
     # 1. List videos
     ok, video_files = with_retries(
@@ -388,16 +463,21 @@ def run_account(n: int, gdrive_token: str) -> bool:
     )
     if not ok or not video_files:
         log_error(f"Account {n}: Could not list videos or folder is empty.")
-        return False
+        return False, status, status_sha
 
     video_exts  = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
     video_files = [f for f in video_files if Path(f["name"]).suffix.lower() in video_exts]
-    if not video_files:
-        log_error(f"Account {n}: No video files found.")
-        return False
+
+    # Filter out already-uploaded videos
+    fresh_videos = [f for f in video_files if f["id"] not in uploaded_video_ids]
+    log_info(f"Account {n}: {len(video_files)} video(s) in Drive, {len(fresh_videos)} not yet uploaded.")
+
+    if not fresh_videos:
+        log_error(f"Account {n}: All videos have already been uploaded. Nothing to do.")
+        return False, status, status_sha
 
     # 2. Pick & download video
-    chosen      = random.choice(video_files)
+    chosen      = random.choice(fresh_videos)
     video_name  = chosen["name"]
     video_stem  = Path(video_name).stem
     local_video = f"/tmp/acct{n}_{video_name}"
@@ -409,7 +489,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
     )
     if not ok:
         log_error(f"Account {n}: Failed to download video.")
-        return False
+        return False, status, status_sha
 
     # 3. Load metadata
     _, meta_files = with_retries(
@@ -449,25 +529,44 @@ def run_account(n: int, gdrive_token: str) -> bool:
     else:
         log_info(f"Account {n}: Skipping Instagram (no credentials).")
 
-    # 6. Trash source files if any upload succeeded
+    # 6. Record Drive IDs in status.json if any upload succeeded
     any_success = youtube_success or instagram_success
     if any_success:
-        log_info(f"Account {n}: Upload succeeded — trashing source files.")
-        try:
-            gdrive_trash_file(chosen["id"], gdrive_token)
-            log_info(f"Account {n}: Trashed video '{video_name}'.")
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8")
-            log_warn(f"Trash failed: {e.code}")
-            log_warn(body)
+        log_info(f"Account {n}: Upload succeeded — recording Drive IDs in status.json.")
+
+        # Append video Drive ID
+        current_video_ids = status.get(video_key, [])
+        if chosen["id"] not in current_video_ids:
+            current_video_ids.append(chosen["id"])
+        status[video_key] = current_video_ids
+
+        # Append meta Drive ID (only if a meta file existed on Drive)
         if meta_file_id:
+            current_meta_ids = status.get(meta_key, [])
+            if meta_file_id not in current_meta_ids:
+                current_meta_ids.append(meta_file_id)
+            status[meta_key] = current_meta_ids
+            log_info(f"Account {n}: Recorded meta Drive ID '{meta_file_id}' under '{meta_key}'.")
+
+        log_info(f"Account {n}: Recorded video Drive ID '{chosen['id']}' under '{video_key}'.")
+
+        # Commit status.json now (so next account loop gets fresh sha)
+        commit_msg = (
+            f"chore: mark {account_key} video '{video_name}' as uploaded "
+            f"[{datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}]"
+        )
+        committed = save_status(status, status_sha, commit_msg, log_info, log_error)
+
+        if committed:
+            # Re-fetch sha so the next account's save doesn't conflict
             try:
-                gdrive_trash_file(meta_file_id, gdrive_token)
-                log_info(f"Account {n}: Trashed metadata for '{video_stem}'.")
+                data        = _github_api_request("GET", STATUS_FILE_PATH)
+                status_sha  = data["sha"]
+                log_info(f"Account {n}: Refreshed status.json sha → {status_sha[:7]}")
             except Exception as e:
-                log_warn(f"Account {n}: Could not trash metadata: {e}")
+                log_warn(f"Account {n}: Could not refresh sha after commit: {e}")
     else:
-        log_warn(f"Account {n}: All uploads failed — source files kept.")
+        log_warn(f"Account {n}: All uploads failed — status.json not updated.")
 
     # 7. Clean up local temp file
     try:
@@ -496,7 +595,7 @@ def run_account(n: int, gdrive_token: str) -> bool:
     except Exception as e:
         log_warn(f"Account {n}: Could not upload log: {e}")
 
-    return any_success
+    return any_success, status, status_sha
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -510,6 +609,10 @@ def run_all():
         root_log_error("Shared Google Drive credentials (GDRIVE_CLIENT_ID / SECRET / REFRESH_TOKEN) are missing.")
         return False
 
+    if not GIT_PAT or not GITHUB_REPOSITORY:
+        root_log_error("GIT_PAT or GITHUB_REPOSITORY env vars are missing — cannot track status.json.")
+        return False
+
     try:
         gdrive_token = get_gdrive_access_token()
         root_log_info("Shared GDrive token obtained.")
@@ -517,11 +620,15 @@ def run_all():
         root_log_error(f"Could not obtain shared GDrive token: {e}")
         return False
 
+    # Load status.json once; each account updates it and re-fetches the sha
+    status, status_sha = load_status(root_log_info, root_log_warn)
+
     results = {}
     for n in range(1, LOOP + 1):
         root_log_info(f"─── Starting account slot {n} of {LOOP} ───")
         try:
-            results[n] = run_account(n, gdrive_token)
+            ok, status, status_sha = run_account(n, gdrive_token, status, status_sha)
+            results[n] = ok
         except Exception as e:
             root_log_error(f"Account {n} raised unhandled exception: {e}")
             root_log_error(traceback.format_exc())
@@ -530,8 +637,8 @@ def run_all():
     root_log_info("=" * 60)
     root_log_info("All accounts processed. Summary:")
     for n, ok in results.items():
-        status = "✓ SUCCESS" if ok else "✗ FAILED"
-        root_log_info(f"  Account {n}: {status}")
+        status_str = "✓ SUCCESS" if ok else "✗ FAILED"
+        root_log_info(f"  Account {n}: {status_str}")
 
     return any(results.values())
 

@@ -42,7 +42,7 @@ GDRIVE_REFRESH_TOKEN  = os.environ.get("GDRIVE_REFRESH_TOKEN", "")
 # GITHUB CONFIG  (for reading/writing status.json)
 # ─────────────────────────────────────────────
 GIT_PAT           = os.environ.get("GIT_PAT", "")
-GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "")   # e.g. "username/repo"
+GITHUB_REPOSITORY = os.environ.get("GIT_REPOSITORY", "")   # e.g. "username/repo"
 STATUS_FILE_PATH  = "status.json"                              # path inside the repo
 
 MAX_RETRIES  = 3

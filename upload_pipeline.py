@@ -29,7 +29,7 @@ import urllib.error
 # ─────────────────────────────────────────────
 # HARDCODED LOOP — change this directly in code
 # ─────────────────────────────────────────────
-LOOP = 2
+LOOP = 3
 
 # ─────────────────────────────────────────────
 # SHARED GDRIVE CREDENTIALS  (no suffix — same for all accounts)

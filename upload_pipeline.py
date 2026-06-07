@@ -207,16 +207,81 @@ def save_status(status: dict, sha: str | None, commit_message: str, log_info, lo
 #     with urllib.request.urlopen(req) as resp:
 #         return json.loads(resp.read())["access_token"]
 
+# def get_gdrive_access_token():
+
+#     client_id = GDRIVE_CLIENT_ID.strip()
+#     client_secret = GDRIVE_CLIENT_SECRET.strip()
+#     refresh_token = GDRIVE_REFRESH_TOKEN.strip()
+
+#     print("DEBUG:")
+#     print("CLIENT_ID exists:", bool(client_id))
+#     print("CLIENT_SECRET exists:", bool(client_secret))
+#     print("REFRESH_TOKEN exists:", bool(refresh_token))
+
+#     payload = urllib.parse.urlencode({
+#         "client_id": client_id,
+#         "client_secret": client_secret,
+#         "refresh_token": refresh_token,
+#         "grant_type": "refresh_token",
+#     }).encode()
+
+#     req = urllib.request.Request(
+#         "https://oauth2.googleapis.com/token",
+#         data=payload,
+#         method="POST",
+#         headers={
+#             "Content-Type": "application/x-www-form-urlencoded"
+#         }
+#     )
+
+#     try:
+
+#         with urllib.request.urlopen(req) as resp:
+
+#             data = json.loads(resp.read())
+
+#             print("Google token request successful")
+
+#             return data["access_token"]
+
+#     except urllib.error.HTTPError as e:
+
+#         print("\n========== GOOGLE TOKEN ERROR ==========")
+#         print("HTTP CODE:", e.code)
+
+#         try:
+
+#             error_body = e.read().decode()
+
+#             print(error_body)
+
+#         except:
+
+#             print("Could not decode error body")
+
+#         print("=======================================\n")
+
+#         raise
+
+
 def get_gdrive_access_token():
 
     client_id = GDRIVE_CLIENT_ID.strip()
     client_secret = GDRIVE_CLIENT_SECRET.strip()
     refresh_token = GDRIVE_REFRESH_TOKEN.strip()
 
-    print("DEBUG:")
-    print("CLIENT_ID exists:", bool(client_id))
-    print("CLIENT_SECRET exists:", bool(client_secret))
-    print("REFRESH_TOKEN exists:", bool(refresh_token))
+    print("\n===== GDRIVE DEBUG =====")
+
+    print("CLIENT_ID:")
+    print(client_id)
+
+    print("\nCLIENT_SECRET:")
+    print(client_secret)
+
+    print("\nREFRESH_TOKEN:")
+    print(refresh_token)
+
+    print("========================\n")
 
     payload = urllib.parse.urlencode({
         "client_id": client_id,
@@ -240,13 +305,14 @@ def get_gdrive_access_token():
 
             data = json.loads(resp.read())
 
-            print("Google token request successful")
+            print("\nTOKEN REQUEST SUCCESS\n")
 
             return data["access_token"]
 
     except urllib.error.HTTPError as e:
 
         print("\n========== GOOGLE TOKEN ERROR ==========")
+
         print("HTTP CODE:", e.code)
 
         try:
@@ -255,11 +321,11 @@ def get_gdrive_access_token():
 
             print(error_body)
 
-        except:
+        except Exception:
 
             print("Could not decode error body")
 
-        print("=======================================\n")
+        print("========================================\n")
 
         raise
 
